@@ -1,5 +1,7 @@
+import asyncio
 import json
 import base64
+import concurrent.futures
 import io
 import os
 import webbrowser
@@ -19,11 +21,49 @@ class SaveAPI:
     async def handle_open(self, request):
         data = await request.json()
         path = data.get('path', '')
+        print(f"[api] open requested: path={path!r}")
+        try:
+            self.save_file = parse_save(path)
+            self.current_path = path
+            print(f"[api] open success: version={self.save_file.save_version}")
+            return await self._save_to_response()
+        except Exception as e:
+            print(f"[api] open failed: {e}")
+            return web.json_response({'error': str(e)}, status=400)
+
+    async def handle_browse(self, request):
+        """Open native file dialog (runs tkinter in a thread)."""
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+        except ImportError:
+            return web.json_response({'error': 'tkinter not available'}, status=501)
+
+        def _dialog():
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            root.lift()
+            path = filedialog.askopenfilename(
+                title="Select ECWolf Save File",
+                filetypes=[("ECWolf Save Files", "*.ecs"), ("All Files", "*.*")],
+            )
+            root.destroy()
+            return path
+
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            path = await loop.run_in_executor(pool, _dialog)
+
+        if not path:
+            return web.json_response({'cancelled': True})
+
         try:
             self.save_file = parse_save(path)
             self.current_path = path
             return await self._save_to_response()
         except Exception as e:
+            print(f"[api] browse open failed: {e}")
             return web.json_response({'error': str(e)}, status=400)
 
     async def handle_get_info(self, request):
@@ -128,6 +168,7 @@ def create_app(frontend_dir: str | None = None) -> web.Application:
     app = web.Application()
 
     app.router.add_post('/api/open', api.handle_open)
+    app.router.add_post('/api/browse', api.handle_browse)
     app.router.add_get('/api/info', api.handle_get_info)
     app.router.add_post('/api/save', api.handle_save)
     app.router.add_get('/api/screenshot', api.handle_screenshot)

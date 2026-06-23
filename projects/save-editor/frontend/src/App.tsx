@@ -87,17 +87,24 @@ export default function App() {
   }, [])
 
   const handleOpenFile = async () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.ecs'
-    input.onchange = async () => {
-      const file = input.files?.[0]
-      if (file) {
-        const p = (file as any).path || file.name
-        await loadFile(p)
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await api('/api/browse', { method: 'POST' })
+      if (!result.cancelled) {
+        setSaveInfo(result)
+        setSavePath(result.path)
+        setEditedMeta({ ...result.metadata })
+        if (result.hasScreenshot) {
+          const img = await api('/api/screenshot')
+          setScreenshot(img.image)
+        }
       }
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setLoading(false)
     }
-    input.click()
   }
 
   const handleOpenManualPath = async () => {

@@ -110,6 +110,7 @@ export default function App() {
           const img = await api('/api/screenshot')
           setScreenshot(img.image)
         }
+        api('/api/snap').then(setSnapData).catch(() => setSnapData(null))
       }
     } catch (e) {
       setError(String(e))
@@ -156,7 +157,7 @@ export default function App() {
       })
       setSaveInfo(result)
       setEditedMeta({ ...result.metadata })
-      setSnapData(null)
+      api('/api/snap').then(setSnapData).catch(() => setSnapData(null))
       alert('Save file updated!')
     } catch (e) {
       setError(String(e))

@@ -173,7 +173,27 @@ def _decode_screenshot(
         raw = b''.join(idat_chunks)
         decompressed = zlib.decompress(raw)
         if color_type == 3 and bit_depth == 8:
-            img = Image.frombytes('P', (width, height), decompressed)
+            # PNG raw data has 1 filter byte per row; strip them
+            stride = width + 1
+            pixels = bytearray()
+            for row in range(height):
+                off = row * stride
+                fb = decompressed[off]
+                row_data = decompressed[off + 1 : off + 1 + width]
+                if fb == 1:  # Sub
+                    prev = 0
+                    for b in row_data:
+                        v = (b + prev) & 0xFF
+                        pixels.append(v)
+                        prev = v
+                elif fb == 2:  # Up
+                    for i, b in enumerate(row_data):
+                        above = pixels[(row - 1) * width + i] if row > 0 else 0
+                        pixels.append((b + above) & 0xFF)
+                else:  # 0 = None (most common in ECWolf saves)
+                    pixels.extend(row_data)
+
+            img = Image.frombytes('P', (width, height), bytes(pixels))
             img.putpalette(palette_data)
             return img.convert('RGBA')
         else:

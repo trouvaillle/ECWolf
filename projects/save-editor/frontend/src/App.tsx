@@ -45,6 +45,7 @@ export default function App() {
   const [editedMeta, setEditedMeta] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [savePath, setSavePath] = useState('')
+  const [manualPath, setManualPath] = useState('')
 
   const loadFile = useCallback(async (path: string) => {
     setLoading(true)
@@ -99,6 +100,11 @@ export default function App() {
     input.click()
   }
 
+  const handleOpenManualPath = async () => {
+    if (!manualPath.trim()) return
+    await loadFile(manualPath.trim())
+  }
+
   const handleSave = async () => {
     setSaving(true)
     setError(null)
@@ -141,7 +147,18 @@ export default function App() {
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
           <div style={{ textAlign: 'center' }}>
             <p style={{ fontSize: 18, marginBottom: 16 }}>Open an ECWolf save file (.ecs) to begin</p>
-            <button onClick={handleOpenFile} style={{ ...btnStyle, fontSize: 16, padding: '10px 24px' }}>Open File</button>
+            <button onClick={handleOpenFile} style={{ ...btnStyle, fontSize: 16, padding: '10px 24px' }}>Browse...</button>
+            <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
+              <span style={{ fontSize: 13 }}>or enter path:</span>
+              <input
+                value={manualPath}
+                onChange={e => setManualPath(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleOpenManualPath()}
+                placeholder="C:\Users\USER\Saved Games\ECWolf\savegam0.ecs"
+                style={{ ...inputStyle, width: 360 }}
+              />
+              <button onClick={handleOpenManualPath} style={btnStyle}>Open</button>
+            </div>
           </div>
         </div>
       ) : (

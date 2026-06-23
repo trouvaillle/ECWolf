@@ -1,3 +1,4 @@
+import os
 import struct
 import zlib
 import io
@@ -51,7 +52,18 @@ def _read_png_chunks(path: str) -> list[tuple[str, bytes, int]]:
     return chunks
 
 
+def resolve_save_path(path: str) -> str:
+    p = path.strip().strip('"\'')
+    p = os.path.expanduser(p)
+    p = os.path.expandvars(p)
+    p = os.path.abspath(p)
+    if not os.path.isfile(p):
+        raise FileNotFoundError(f"Save file not found: {p}")
+    return p
+
+
 def parse_save(path: str) -> SaveFile:
+    path = resolve_save_path(path)
     sf = SaveFile(path=path)
 
     with open(path, 'rb') as f:

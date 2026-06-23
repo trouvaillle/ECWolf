@@ -1,0 +1,14 @@
+[project]
+name = "ecwolf-save-editor"
+version = "0.1.0"
+description = "ECWolf save file (.ecs) editor with WebView2 + React UI"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.9",
+    "Pillow>=10.0",
+    "pywebview>=5.0",
+]
+
+[project.scripts]
+ecwolf-save-editor = "main:main"

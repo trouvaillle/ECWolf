@@ -1,43 +1,77 @@
 @echo off
 setlocal enabledelayedexpansion
+cd /d "%~dp0" || (
+    echo ERROR: Could not change to script directory
+    pause
+    exit /b 1
+)
 
-cd /d "%~dp0"
+echo [*] Checking dependencies...
 
-:: 1. Check dependencies
 where uv >nul 2>&1
 if errorlevel 1 (
-    echo Missing: uv (pip install uv)
+    echo ERROR: uv not found. Install with: pip install uv
+    pause
     exit /b 1
 )
+echo     uv: OK
+
 where npm >nul 2>&1
 if errorlevel 1 (
-    echo Missing: npm (install node.js)
+    echo ERROR: npm not found. Install Node.js from https://nodejs.org/
+    pause
     exit /b 1
 )
+echo     npm: OK
 
-:: 2. Install Python deps
+echo.
 echo [*] Installing Python dependencies...
 call uv sync
-if errorlevel 1 exit /b
+if errorlevel 1 (
+    echo ERROR: uv sync failed
+    pause
+    exit /b 1
+)
+echo     Python dependencies: OK
 
-:: 3. Install frontend deps & build
 if not exist "frontend\node_modules" (
+    echo.
     echo [*] Installing frontend dependencies...
-    cd frontend
+    pushd frontend
     call npm install
-    cd "%~dp0"
+    if errorlevel 1 (
+        echo ERROR: npm install failed
+        popd
+        pause
+        exit /b 1
+    )
+    popd
+    echo     Frontend dependencies: OK
 )
 
 if not exist "frontend\dist" (
+    echo.
     echo [*] Building frontend...
-    cd frontend
+    pushd frontend
     call npx vite build
-    cd "%~dp0"
+    if errorlevel 1 (
+        echo ERROR: vite build failed
+        popd
+        pause
+        exit /b 1
+    )
+    popd
+    echo     Frontend build: OK
 )
 
-:: 4. Run the backend
+echo.
 echo [*] Starting ECWolf Save Editor...
 echo     ^> Open http://127.0.0.1:8765 in your browser
 echo     ^> Press Ctrl+C to stop
 echo.
 call uv run python main.py
+if errorlevel 1 (
+    echo ERROR: Application exited with error
+    pause
+    exit /b 1
+)

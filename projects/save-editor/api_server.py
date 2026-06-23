@@ -9,7 +9,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from save_parser import parse_save, rebuild_save_file
+from save_parser import parse_save, rebuild_save_file, _compress_snap
 
 
 class SaveAPI:
@@ -97,6 +97,46 @@ class SaveAPI:
         b64 = base64.b64encode(buf.getvalue()).decode('ascii')
         return web.json_response({'image': f'data:image/png;base64,{b64}'})
 
+    async def handle_snap(self, request):
+        if not self.save_file:
+            return web.json_response({'error': 'No save file loaded'}, status=400)
+        d = self.save_file.snap_decompressed
+        if d is None:
+            return web.json_response({'error': 'No snAp data'}, status=400)
+        return web.json_response({
+            'hex': d.hex(),
+            'size': len(d),
+        })
+
+    async def handle_snap_patch(self, request):
+        if not self.save_file:
+            return web.json_response({'error': 'No save file loaded'}, status=400)
+
+        data = await request.json()
+        new_meta = data.get('metadata', None)
+        offset = data.get('offset')
+        hex_data = data.get('hex')
+        save_path = data.get('path', self.current_path)
+
+        if offset is not None and hex_data is not None:
+            d = bytearray(self.save_file.snap_decompressed)
+            patch = bytes.fromhex(hex_data)
+            if offset < 0 or offset + len(patch) > len(d):
+                return web.json_response({'error': 'Patch out of bounds'}, status=400)
+            d[offset:offset+len(patch)] = patch
+            new_snap = _compress_snap(d, self.save_file.snap_compressed)
+            new_data = rebuild_save_file(self.save_file, new_meta, new_snap)
+        elif new_meta:
+            new_data = rebuild_save_file(self.save_file, new_meta)
+        else:
+            return web.json_response({'error': 'Nothing to patch'}, status=400)
+
+        with open(save_path, 'wb') as f:
+            f.write(new_data)
+        self.save_file = parse_save(save_path)
+        self.current_path = save_path
+        return await self._save_to_response()
+
     async def handle_list_files(self, request):
         path = request.query.get('dir', '')
         if not path:
@@ -172,6 +212,8 @@ def create_app(frontend_dir: str | None = None) -> web.Application:
     app.router.add_get('/api/info', api.handle_get_info)
     app.router.add_post('/api/save', api.handle_save)
     app.router.add_get('/api/screenshot', api.handle_screenshot)
+    app.router.add_get('/api/snap', api.handle_snap)
+    app.router.add_post('/api/snap_patch', api.handle_snap_patch)
     app.router.add_get('/api/files', api.handle_list_files)
 
     if frontend_dir:

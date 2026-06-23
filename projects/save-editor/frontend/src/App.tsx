@@ -12,6 +12,11 @@ interface SaveInfo {
 
 type Tab = 'info' | 'meta' | 'hex'
 
+interface SnapData {
+  hex: string
+  size: number
+}
+
 const API = ''
 
 async function api(path: string, options?: RequestInit) {
@@ -46,6 +51,10 @@ export default function App() {
   const [saving, setSaving] = useState(false)
   const [savePath, setSavePath] = useState('')
   const [manualPath, setManualPath] = useState('')
+  const [snapData, setSnapData] = useState<SnapData | null>(null)
+  const [hexOffset, setHexOffset] = useState(0)
+  const [hexInput, setHexInput] = useState('')
+  const [hexMsg, setHexMsg] = useState('')
 
   const loadFile = useCallback(async (path: string) => {
     setLoading(true)
@@ -66,6 +75,7 @@ export default function App() {
       } else {
         setScreenshot(null)
       }
+      api('/api/snap').then(setSnapData).catch(() => setSnapData(null))
     } catch (e) {
       setError(String(e))
     } finally {
@@ -82,6 +92,7 @@ export default function App() {
         if (info.hasScreenshot) {
           api('/api/screenshot').then((img: any) => setScreenshot(img.image)).catch(() => {})
         }
+        api('/api/snap').then(setSnapData).catch(() => setSnapData(null))
       })
       .catch(() => {})
   }, [])
@@ -112,6 +123,25 @@ export default function App() {
     await loadFile(manualPath.trim())
   }
 
+  const handleHexPatch = async () => {
+    setHexMsg('')
+    const offset = parseInt(hexOffset.toString(), 10)
+    const hex = hexInput.trim().replace(/\s+/g, '')
+    if (!hex || isNaN(offset)) { setHexMsg('Invalid input'); return }
+    try {
+      await api('/api/snap_patch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: savePath, metadata: editedMeta, offset, hex }),
+      })
+      const snap = await api('/api/snap')
+      setSnapData(snap)
+      setHexMsg('Patched successfully!')
+    } catch (e) {
+      setHexMsg(String(e))
+    }
+  }
+
   const handleSave = async () => {
     setSaving(true)
     setError(null)
@@ -126,6 +156,7 @@ export default function App() {
       })
       setSaveInfo(result)
       setEditedMeta({ ...result.metadata })
+      setSnapData(null)
       alert('Save file updated!')
     } catch (e) {
       setError(String(e))
@@ -199,7 +230,7 @@ export default function App() {
 
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ display: 'flex', borderBottom: '1px solid #0f3460' }}>
-              {(['info', 'meta'] as Tab[]).map(t => (
+              {(['info', 'meta', 'hex'] as Tab[]).map(t => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -209,7 +240,7 @@ export default function App() {
                     borderBottom: tab === t ? '2px solid #e94560' : '2px solid transparent',
                   }}
                 >
-                  {t === 'info' ? 'Game Info' : 'Metadata'}
+                  {t === 'info' ? 'Game Info' : t === 'meta' ? 'Metadata' : 'Game State'}
                 </button>
               ))}
             </div>
@@ -231,24 +262,73 @@ export default function App() {
                   <p style={{ color: '#888', fontSize: 13, marginBottom: 12 }}>
                     Edit metadata fields below. Changes are applied when you click "Save".
                   </p>
-                  {metaKeys.map(key => {
-                    const editable = ['Title'].includes(key)
-                    return (
-                      <div key={key} style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 2 }}>{key}</label>
-                        {editable ? (
-                          <input
-                            value={editedMeta[key] || ''}
-                            onChange={e => setEditedMeta(prev => ({ ...prev, [key]: e.target.value }))}
-                            style={inputStyle}
-                          />
-                        ) : (
-                          <div style={{ fontSize: 13, color: '#ccc', padding: '4px 0' }}>{saveInfo.metadata[key] || ''}</div>
-                        )}
-                      </div>
-                    )
-                  })}
+                  {metaKeys.map(key => (
+                    <div key={key} style={{ marginBottom: 8 }}>
+                      <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 2 }}>{key}</label>
+                      <input
+                        value={editedMeta[key] || ''}
+                        onChange={e => setEditedMeta(prev => ({ ...prev, [key]: e.target.value }))}
+                        style={inputStyle}
+                      />
+                    </div>
+                  ))}
                 </div>
+              )}
+
+              {tab === 'hex' && snapData && (
+                <div>
+                  <p style={{ color: '#888', fontSize: 13, marginBottom: 12 }}>
+                    Edit raw snAp data (hex). Game state like health, ammo, score, lives are in this binary blob.
+                    Changes are applied immediately on each patch.
+                  </p>
+                  <Section title="Quick Patch">
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: '#888' }}>Offset:</span>
+                      <input
+                        type="number"
+                        value={hexOffset}
+                        onChange={e => setHexOffset(Number(e.target.value) || 0)}
+                        style={{ ...inputStyle, width: 80 }}
+                      />
+                      <span style={{ fontSize: 12, color: '#888' }}>Hex bytes:</span>
+                      <input
+                        value={hexInput}
+                        onChange={e => setHexInput(e.target.value)}
+                        placeholder="e.g. 64 00 00 00"
+                        style={{ ...inputStyle, width: 200 }}
+                      />
+                      <button onClick={handleHexPatch} style={btnStyle}>Apply</button>
+                      {hexMsg && <span style={{ fontSize: 12, color: hexMsg.includes('Error') ? '#ff6b6b' : '#6bff6b' }}>{hexMsg}</span>}
+                    </div>
+                  </Section>
+                  <Section title="Hex View">
+                    <div style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6, maxHeight: 500, overflow: 'auto', background: '#111', padding: 8, borderRadius: 4 }}>
+                      {Array.from({ length: Math.min(snapData.size, 2048) }, (_, i) => {
+                        if (i % 16 !== 0) return null
+                        const row = snapData.hex.slice(i * 2, (i + 16) * 2)
+                        if (!row) return null
+                        const hex = row.match(/.{1,2}/g)?.join(' ') || ''
+                        const ascii = row.match(/.{1,2}/g)?.map(b => {
+                          const c = parseInt(b, 16)
+                          return c >= 32 && c < 127 ? String.fromCharCode(c) : '.'
+                        }).join('') || ''
+                        return (
+                          <div key={i} style={{ display: 'flex' }}>
+                            <span style={{ color: '#888', width: 56, flexShrink: 0 }}>{i.toString(16).padStart(4, '0')}</span>
+                            <span style={{ color: '#ccc', width: 48 * 3, flexShrink: 0 }}>{hex}</span>
+                            <span style={{ color: '#888' }}> |{ascii}|</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {snapData.size > 2048 && (
+                      <p style={{ color: '#666', fontSize: 12, marginTop: 8 }}>Showing first 2048 bytes of {snapData.size} total</p>
+                    )}
+                  </Section>
+                </div>
+              )}
+              {tab === 'hex' && !snapData && (
+                <p style={{ color: '#888' }}>No snAp data available</p>
               )}
             </div>
           </div>

@@ -147,6 +147,20 @@ def _decompress_snap(data: bytes) -> Optional[bytes]:
         return None
 
 
+def _compress_snap(data: bytes, original: bytes) -> bytes:
+    if len(data) < 12:
+        return original
+    header = original[:12]
+    compressed = zlib.compress(data)
+    if len(compressed) > 0xFFFFFFFF:
+        return original
+    header = struct.pack('>I', len(data))  # uncomp_size in header
+    # Original FLZL header: sig(4) + comp_size(4) + uncomp_size(4)
+    sig = original[:4]
+    new_header = sig + struct.pack('>I', len(compressed)) + struct.pack('>I', len(data))
+    return new_header + compressed
+
+
 def _decode_screenshot(
     idat_chunks: list[bytes],
     palette_data: bytes,
@@ -160,9 +174,6 @@ def _decode_screenshot(
         decompressed = zlib.decompress(raw)
         if color_type == 3 and bit_depth == 8:
             img = Image.frombytes('P', (width, height), decompressed)
-            pal = Image.new('P', (1, 1))
-            pal.putpalette(palette_data)
-            img = img.quantize(palette=None)
             img.putpalette(palette_data)
             return img.convert('RGBA')
         else:
@@ -171,37 +182,31 @@ def _decode_screenshot(
         return None
 
 
-def rebuild_save_file(sf: SaveFile, new_metadata: Optional[dict[str, str]] = None) -> bytes:
+def rebuild_save_file(sf: SaveFile, new_metadata: Optional[dict[str, str]] = None, new_snap: Optional[bytes] = None) -> bytes:
     buf = io.BytesIO()
     buf.write(PNG_SIG)
 
-    if new_metadata:
-        return _rebuild_with_metadata(sf, new_metadata)
+    if new_metadata or new_snap is not None:
+        for chunk_type, chunk_data in sf.raw_chunks:
+            if chunk_type == 'tEXt' and new_metadata:
+                null_pos = chunk_data.index(0)
+                key = chunk_data[:null_pos].decode('latin-1')
+                if key in new_metadata:
+                    val = new_metadata[key].encode('latin-1')
+                    new_chunk = chunk_data[:null_pos+1] + val
+                else:
+                    new_chunk = chunk_data
+                _write_png_chunk(buf, 'tEXt', new_chunk)
+            elif chunk_type == 'snAp' and new_snap is not None:
+                _write_png_chunk(buf, 'snAp', new_snap)
+            elif chunk_type != 'IEND':
+                _write_png_chunk(buf, chunk_type, chunk_data)
+        _write_png_chunk(buf, 'IEND', b'')
+        return buf.getvalue()
 
     for chunk_type, chunk_data in sf.raw_chunks:
         _write_png_chunk(buf, chunk_type, chunk_data)
 
-    return buf.getvalue()
-
-
-def _rebuild_with_metadata(sf: SaveFile, new_meta: dict[str, str]) -> bytes:
-    buf = io.BytesIO()
-    buf.write(PNG_SIG)
-
-    for chunk_type, chunk_data in sf.raw_chunks:
-        if chunk_type == 'tEXt':
-            null_pos = chunk_data.index(0)
-            key = chunk_data[:null_pos].decode('latin-1')
-            if key in new_meta:
-                val = new_meta[key].encode('latin-1')
-                new_chunk = chunk_data[:null_pos+1] + val
-            else:
-                new_chunk = chunk_data
-            _write_png_chunk(buf, 'tEXt', new_chunk)
-        elif chunk_type != 'IEND':
-            _write_png_chunk(buf, chunk_type, chunk_data)
-
-    _write_png_chunk(buf, 'IEND', b'')
     return buf.getvalue()
 
 

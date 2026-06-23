@@ -10,7 +10,7 @@ interface SaveInfo {
   hasScreenshot: boolean
 }
 
-type Tab = 'info' | 'meta' | 'hex'
+type Tab = 'info' | 'meta' | 'gamestate' | 'hex'
 
 interface SnapData {
   hex: string
@@ -55,6 +55,9 @@ export default function App() {
   const [hexOffset, setHexOffset] = useState(0)
   const [hexInput, setHexInput] = useState('')
   const [hexMsg, setHexMsg] = useState('')
+  const [gameStateFields, setGameStateFields] = useState<Record<string, any> | null>(null)
+  const [editedGameState, setEditedGameState] = useState<Record<string, string>>({})
+  const [gsMsg, setGsMsg] = useState('')
 
   const loadFile = useCallback(async (path: string) => {
     setLoading(true)
@@ -76,6 +79,14 @@ export default function App() {
         setScreenshot(null)
       }
       api('/api/snap').then(setSnapData).catch(() => setSnapData(null))
+      api('/api/gamestate').then(r => {
+        setGameStateFields(r.fields)
+        const initial: Record<string, string> = {}
+        for (const [k, v] of Object.entries(r.fields)) {
+          if (k !== 'player_class') initial[k] = String(v)
+        }
+        setEditedGameState(initial)
+      }).catch(() => setGameStateFields(null))
     } catch (e) {
       setError(String(e))
     } finally {
@@ -93,6 +104,14 @@ export default function App() {
           api('/api/screenshot').then((img: any) => setScreenshot(img.image)).catch(() => {})
         }
         api('/api/snap').then(setSnapData).catch(() => setSnapData(null))
+        api('/api/gamestate').then(r => {
+          setGameStateFields(r.fields)
+          const initial: Record<string, string> = {}
+          for (const [k, v] of Object.entries(r.fields)) {
+            if (k !== 'player_class') initial[k] = String(v)
+          }
+          setEditedGameState(initial)
+        }).catch(() => setGameStateFields(null))
       })
       .catch(() => {})
   }, [])
@@ -111,6 +130,14 @@ export default function App() {
           setScreenshot(img.image)
         }
         api('/api/snap').then(setSnapData).catch(() => setSnapData(null))
+        api('/api/gamestate').then(r => {
+          setGameStateFields(r.fields)
+          const initial: Record<string, string> = {}
+          for (const [k, v] of Object.entries(r.fields)) {
+            if (k !== 'player_class') initial[k] = String(v)
+          }
+          setEditedGameState(initial)
+        }).catch(() => setGameStateFields(null))
       }
     } catch (e) {
       setError(String(e))
@@ -140,6 +167,50 @@ export default function App() {
       setHexMsg('Patched successfully!')
     } catch (e) {
       setHexMsg(String(e))
+    }
+  }
+
+  const handleGameStateSave = async () => {
+    setGsMsg('')
+    setSaving(true)
+    try {
+      const changes: Record<string, any> = {}
+      for (const [k, v] of Object.entries(editedGameState)) {
+        if (gameStateFields && gameStateFields[k] !== undefined && String(gameStateFields[k]) !== String(v)) {
+          const orig = gameStateFields[k]
+          if (typeof orig === 'number') {
+            changes[k] = Number(v)
+          } else if (typeof orig === 'boolean') {
+            changes[k] = v === 'true' || v === '1'
+          } else {
+            changes[k] = v
+          }
+        }
+      }
+      if (Object.keys(changes).length === 0) {
+        setGsMsg('No changes to apply')
+        return
+      }
+      const result = await api('/api/gamestate_save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: savePath, changes, metadata: editedMeta }),
+      })
+      setSaveInfo(result)
+      setEditedMeta({ ...result.metadata })
+      const gs = await api('/api/gamestate')
+      setGameStateFields(gs.fields)
+      const initial: Record<string, string> = {}
+      for (const [k, v] of Object.entries(gs.fields)) {
+        if (k !== 'player_class') initial[k] = String(v)
+      }
+      setEditedGameState(initial)
+      api('/api/snap').then(setSnapData).catch(() => setSnapData(null))
+      setGsMsg('Game state saved!')
+    } catch (e) {
+      setGsMsg(String(e))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -231,7 +302,7 @@ export default function App() {
 
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ display: 'flex', borderBottom: '1px solid #0f3460' }}>
-              {(['info', 'meta', 'hex'] as Tab[]).map(t => (
+              {(['info', 'meta', 'gamestate', 'hex'] as Tab[]).map(t => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -241,7 +312,7 @@ export default function App() {
                     borderBottom: tab === t ? '2px solid #e94560' : '2px solid transparent',
                   }}
                 >
-                  {t === 'info' ? 'Game Info' : t === 'meta' ? 'Metadata' : 'Game State'}
+                  {t === 'info' ? 'Game Info' : t === 'meta' ? 'Metadata' : t === 'gamestate' ? 'Game State' : 'Hex Editor'}
                 </button>
               ))}
             </div>
@@ -273,6 +344,99 @@ export default function App() {
                       />
                     </div>
                   ))}
+                </div>
+              )}
+
+              {tab === 'gamestate' && (
+                <div>
+                  <p style={{ color: '#888', fontSize: 13, marginBottom: 12 }}>
+                    Edit structured game state fields. "player_*" fields require full FArchive parsing
+                    and may not be available for all save files.
+                  </p>
+                  {!gameStateFields ? (
+                    <p style={{ color: '#666' }}>Game state not available</p>
+                  ) : (
+                    <div>
+                      <Section title="Top-level">
+                        {['difficulty', 'secretcount', 'treasurecount', 'killcount',
+                          'secrettotal', 'treasuretotal', 'killtotal',
+                          'time_count', 'victory_flag', 'fullmap'].map(key => {
+                          if (!(key in gameStateFields)) return null
+                          const isBool = key === 'victory_flag' || key === 'fullmap'
+                          const val = gameStateFields[key]
+                          return (
+                            <div key={key} style={{ marginBottom: 6, display: 'flex', alignItems: 'center' }}>
+                              <label style={{ width: 140, fontSize: 12, color: '#888', flexShrink: 0 }}>{key}</label>
+                              {isBool ? (
+                                <select
+                                  value={String(editedGameState[key] ?? String(val))}
+                                  onChange={e => setEditedGameState(prev => ({ ...prev, [key]: e.target.value }))}
+                                  style={{ ...inputStyle, width: 100 }}
+                                >
+                                  <option value="false">False</option>
+                                  <option value="true">True</option>
+                                </select>
+                              ) : (
+                                <input
+                                  type="number"
+                                  value={editedGameState[key] ?? String(val)}
+                                  onChange={e => setEditedGameState(prev => ({ ...prev, [key]: e.target.value }))}
+                                  style={{ ...inputStyle, width: 120 }}
+                                />
+                              )}
+                              <span style={{ fontSize: 11, color: '#666', marginLeft: 8 }}>({String(val)})</span>
+                            </div>
+                          )
+                        })}
+                      </Section>
+                      <Section title="Level Ratios">
+                        {['kill_ratio', 'secrets_ratio', 'treasure_ratio', 'num_levels', 'level_time', 'level_par'].map(key => {
+                          if (!(key in gameStateFields)) return null
+                          return (
+                            <div key={key} style={{ marginBottom: 6, display: 'flex', alignItems: 'center' }}>
+                              <label style={{ width: 140, fontSize: 12, color: '#888', flexShrink: 0 }}>{key}</label>
+                              <input
+                                type="number"
+                                value={editedGameState[key] ?? String(gameStateFields[key])}
+                                onChange={e => setEditedGameState(prev => ({ ...prev, [key]: e.target.value }))}
+                                style={{ ...inputStyle, width: 120 }}
+                              />
+                              <span style={{ fontSize: 11, color: '#666', marginLeft: 8 }}>({String(gameStateFields[key])})</span>
+                            </div>
+                          )
+                        })}
+                      </Section>
+                      <Section title="Player">
+                        {['player_state', 'player_health', 'player_score', 'player_lives',
+                          'player_fov', 'player_frags', 'player_respawn'].map(key => {
+                          if (!(key in gameStateFields)) return null
+                          const val = gameStateFields[key]
+                          return (
+                            <div key={key} style={{ marginBottom: 6, display: 'flex', alignItems: 'center' }}>
+                              <label style={{ width: 140, fontSize: 12, color: '#888', flexShrink: 0 }}>{key}</label>
+                              <input
+                                type="number"
+                                step={key === 'player_fov' ? '0.1' : '1'}
+                                value={editedGameState[key] ?? String(val)}
+                                onChange={e => setEditedGameState(prev => ({ ...prev, [key]: e.target.value }))}
+                                style={{ ...inputStyle, width: 120 }}
+                              />
+                              <span style={{ fontSize: 11, color: '#666', marginLeft: 8 }}>({String(val)})</span>
+                            </div>
+                          )
+                        })}
+                        {!('player_health' in gameStateFields) && (
+                          <p style={{ color: '#666', fontSize: 12 }}>Player fields require deeper FArchive parsing (not available for this save)</p>
+                        )}
+                      </Section>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 16 }}>
+                        <button onClick={handleGameStateSave} disabled={saving} style={btnStyle}>
+                          {saving ? 'Saving...' : 'Apply Changes'}
+                        </button>
+                        {gsMsg && <span style={{ fontSize: 12, color: gsMsg.includes('Error') || gsMsg.includes('error') ? '#ff6b6b' : '#6bff6b' }}>{gsMsg}</span>}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

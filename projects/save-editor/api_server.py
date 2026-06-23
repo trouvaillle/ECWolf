@@ -9,7 +9,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from save_parser import parse_save, rebuild_save_file, _compress_snap
+from save_parser import parse_save, parse_snap_gamestate, rebuild_save_file, _compress_snap, apply_gamestate_patches
 
 
 class SaveAPI:
@@ -137,6 +137,58 @@ class SaveAPI:
         self.current_path = save_path
         return await self._save_to_response()
 
+    async def handle_gamestate(self, request):
+        if not self.save_file:
+            return web.json_response({'error': 'No save file loaded'}, status=400)
+        d = self.save_file.snap_decompressed
+        if d is None:
+            return web.json_response({'error': 'No snAp data'}, status=400)
+        try:
+            gs = parse_snap_gamestate(d, self.save_file.save_version, self.save_file.save_prod_version)
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=400)
+
+        fields = {}
+        for name in ['difficulty', 'player_class', 'secretcount', 'treasurecount',
+                      'killcount', 'secrettotal', 'treasuretotal', 'killtotal',
+                      'time_count', 'victory_flag', 'fullmap',
+                      'kill_ratio', 'secrets_ratio', 'treasure_ratio',
+                      'num_levels', 'level_time', 'level_par']:
+            fields[name] = getattr(gs, name)
+        # Only include player fields if they were successfully parsed
+        if gs.raw_player_end > 0:
+            for name in ['player_state', 'player_health', 'player_score',
+                          'player_lives', 'player_fov', 'player_frags', 'player_respawn']:
+                fields[name] = getattr(gs, name)
+        return web.json_response({'fields': fields})
+
+    async def handle_gamestate_save(self, request):
+        if not self.save_file:
+            return web.json_response({'error': 'No save file loaded'}, status=400)
+        d = self.save_file.snap_decompressed
+        if d is None:
+            return web.json_response({'error': 'No snAp data'}, status=400)
+
+        body = await request.json()
+        changes = body.get('changes', {})
+        save_path = body.get('path', self.current_path)
+
+        try:
+            patched = apply_gamestate_patches(
+                d, self.save_file.save_version, self.save_file.save_prod_version, changes
+            )
+            new_snap = _compress_snap(patched, self.save_file.snap_compressed)
+            new_meta = body.get('metadata', None)
+            new_data = rebuild_save_file(self.save_file, new_meta, new_snap)
+            with open(save_path, 'wb') as f:
+                f.write(new_data)
+            self.save_file = parse_save(save_path)
+            self.current_path = save_path
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=400)
+
+        return await self._save_to_response()
+
     async def handle_list_files(self, request):
         path = request.query.get('dir', '')
         if not path:
@@ -214,6 +266,8 @@ def create_app(frontend_dir: str | None = None) -> web.Application:
     app.router.add_get('/api/screenshot', api.handle_screenshot)
     app.router.add_get('/api/snap', api.handle_snap)
     app.router.add_post('/api/snap_patch', api.handle_snap_patch)
+    app.router.add_get('/api/gamestate', api.handle_gamestate)
+    app.router.add_post('/api/gamestate_save', api.handle_gamestate_save)
     app.router.add_get('/api/files', api.handle_list_files)
 
     if frontend_dir:
